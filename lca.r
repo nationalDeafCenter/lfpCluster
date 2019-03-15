@@ -160,17 +160,16 @@ pdatFun <- function(varbs,se,vnames=NULL){
             pdat[[i]] <- pdat[[i]][,1]
         }
     pdat <- as.data.frame(pdat)
-    pdat$class <- gsub(': ','',simpleCap(rownames(ppp[[varbs[1]]])),fixed=TRUE)
+    pdat$class <- c(paste('Class', 1:(nrow(pdat)-1)),'Overall')
     pdat <- gather(pdat,'var','x',-class)
     names(pdat)[names(pdat)=='x'] <- ifelse(se,'se','probability')
-    if(!is.null(vnames)){
-        for(i in 1:length(varbs)) pdat$var[pdat$var==varbs[i]] <- vnames[i]
-        pdat$var <- factor(pdat$var,levels=vnames)
-    } else pdat$var <- factor(pdat$var,levels=varbs)
+    if(!is.null(vnames))
+        for(i in 1:length(varbs)) pdat$var <- gsub(varbs[i],vnames[i],pdat$var)
+    pdat$var <- factor(pdat$var,levels=unique(pdat$var))
     pdat
 }
 
-plotGroup <- function(varbs,vnames=NULL,calc=NULL){
+pdatTot <- function(varbs,vnames=NULL,calc=NULL,catName){
     probDat <- pdatFun(varbs,se=FALSE,vnames=vnames)
     seDat <- pdatFun(varbs,se=TRUE,vnames=vnames)
     pdat <- merge(probDat,seDat)
@@ -182,121 +181,80 @@ plotGroup <- function(varbs,vnames=NULL,calc=NULL){
     pdat$overall <- pdat$class=='Overall'
     if(!is.null(calc)) pdat$overall[pdat$var%in%calc] <- TRUE
 
+    pdat$category <- catName
+    pdat
+}
+
+plotGroup <- function(varbs,vnames=NULL,calc=NULL,catName='n/a'){
+
+    pdat <- pdatTot(varbs,vnames=vnames,calc=calc,catName=catName)
+
     ggplot(pdat,aes(var,probability,fill=overall))+geom_col(position='dodge')+
+        geom_errorbar(aes(ymin=ebmin,ymax=ebmax),width=0)+
         facet_wrap(~class,nrow=1)+
         theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),
                   legend.position='none',text=element_text(size=12))+
         xlab(NULL)+
-        scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))+
-        geom_errorbar(aes(ymin=ebmin,ymax=ebmax),width=0)
+        scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))
+
 }
 
+
+## disDat <- pdatTot(c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),catName='disability')
+
+## edDat <- pdatTot(c('attain','inSchool'),catName='education')
+## ageDat <- pdatTot('ageCat',catName='age')
+
+## pdat <- rbind(disDat,edDat,ageDat)
+
+## ggplot(pdat,aes(var,probability,fill=overall))+geom_col(position='dodge')+
+##         geom_errorbar(aes(ymin=ebmin,ymax=ebmax),width=0)+
+##         facet_grid(category~class,scales="free")+
+##         theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),
+##                   legend.position='none',text=element_text(size=12))+
+##         xlab(NULL)+
+##         scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))
+
+
 ## plot disabilities
-plotGroup(c('other','selfCare','blind','indepLiving','ambulatory','cognitive')
+plotGroup(varbs=c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),
           vnames=c(other='Deafdisabled',selfCare='Self Care',blind='Blind',indepLiving='Independent Living',ambulatory='Ambulatory',cognitive='Cognitive'),
-          calc='Deafdisabled')
+          calc='Deafdisabled',catName='Disabilities')
+
 ggsave('disability.png',width=6.5,height=3)
 
 
 
-disDat <- sapply(
-  function(x) round(probs[[x]][,1],5))
-disDat <- as.data.frame(disDat)
-disDat$class <- c(paste('Class',1:6),'Overall')
-
-disDat <- gather(disDat, 'disability','probability',1:6)
-
-seDat <- sapply(c('selfCare','blind','indepLiving','ambulatory','cognitive','other'),
-  function(x) round(probs.se[[x]][,1],5))
-seDat <- as.data.frame(seDat)
-seDat$class <- c(paste('Class',1:6),'Overall')
-
-disDat <- gather(disDat, 'disability','probability',1:6)
-
-
-disDat$disability <- c(selfCare='Self Care',blind='Blind',indepLiving='Independent Living',ambulatory='Ambulatory',cognitive='Cognitive',other='Deafdisabled')[disDat$disability]
-
-disDat$disability <- factor(disDat$disability)
-disDat$disability <- relevel(disDat$disability,ref='Deafdisabled')
-
-
-ggplot(disDat,aes(disability,probability,fill=overall))+geom_col(position='dodge')+facet_wrap(~class,nrow=1)+theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),legend.position='none',text=element_text(size=12))+xlab(NULL)+scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))
-
 
 ## plot demographics
-demDat <- sapply(c('native','white','sex'),function(x) probs[[x]][,1])
-demDat <- as.data.frame(demDat)
-demDat$class <- c(paste('Class',1:6),'Overall')
+plotGroup(varbs=c('native','white','sex'),
+          vnames=c(native='Native Born',white='White',sex='Female'),catName='Demographics')
 
-demDat <- gather(demDat, 'demographic','probability',1:3)
-
-demDat$demographic <- c(native='Native Born',white='White',sex='Female')[as.character(demDat$demographic)]
-
-demDat$demographic <- factor(demDat$demographic)
-demDat$overall <- demDat$class=='Overall'
-
-ggplot(demDat,aes(demographic,probability,fill=overall))+geom_col(position='dodge')+facet_wrap(~class,nrow=1)+theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),legend.position='none',text=element_text(size=12))+xlab(NULL)
 ggsave('demographic.png',width=6.5,height=3)
 
 ### plot family
-famDat <- with(probs,cbind(Female=sex[,1],Married=married[,1],hupac))
-
-famDat <- as.data.frame(famDat)
-famDat$class <- c(paste('Class',1:6),'Overall')
-
-famDat <- gather(famDat, 'fam','probability',1:5)
-
-famDat$fam <- factor(famDat$fam,levels=unique(famDat$fam))
-famDat$overall <- famDat$class=='Overall'
-
-ttt <- textGrob("Kids at Home")
-
-ggplot(famDat,aes(fam,probability,fill=overall))+geom_col(position='dodge')+facet_wrap(~class,nrow=1)+theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),legend.position='none',text=element_text(size=12),plot.margin = unit(c(1,1,2,1), "lines"))+xlab(NULL)+scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))+annotation_custom(ttt,xmin=3,xmax=5,ymin=-0.07,ymax=0)
-
+plotGroup(varbs=c('sex','married','hupac'))+
+    scale_x_discrete(labels=c('Female','Married','Kids at Home (<6yo)','Kids at Home (all >5yo)',
+                         'No Kids at Home'),catName='Family')
 ggsave('family.png',width=6.5,height=3)
 
+
 #### education
-edDat <- with(probs,cbind(attain,Enrolled=inSchool[,'Yes']))
-
-edDat <- as.data.frame(edDat)
-edDat$class <- c(paste('Class',1:6),'Overall')
-
-edDat <- gather(edDat, 'ed','probability',-class)
-
-edDat$ed <- factor(edDat$ed,levels=unique(edDat$ed))
-edDat$overall <- edDat$class=='Overall'
-
-ggplot(edDat,aes(ed,probability,fill=overall))+geom_col(position='dodge')+facet_wrap(~class,nrow=1)+theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),legend.position='none',text=element_text(size=12),plot.margin = unit(c(1,1,2,1), "lines"))+xlab(NULL)+scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))
+plotGroup(varbs=c('attain','inSchool'),catName='Education')+
+    scale_x_discrete(labels=c('<HS','HS','Some College','BA+','Enrolled'))
 
 ggsave('education.png',width=6.5,height=3)
 
 ### age
-ageDat <- probs$age
-ageDat <- as.data.frame(ageDat)
-ageDat$class <- c(paste('Class',1:6),'Overall')
-
-ageDat <- gather(ageDat, 'age','probability',-class)
-
-ageDat$age <- factor(ageDat$age,levels=unique(ageDat$age))
-ageDat$overall <- ageDat$class=='Overall'
-
-ggplot(ageDat,aes(age,probability,fill=overall))+geom_col(position='dodge')+facet_wrap(~class,nrow=1)+theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),legend.position='none',text=element_text(size=12),plot.margin = unit(c(1,1,2,1), "lines"))+xlab(NULL)+scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))+ggtitle('Age')
+plotGroup('ageCat')+
+    scale_x_discrete(labels=c('25-30','31-35','36-40'))+
+    ggtitle('Age')
 
 ggsave('age.png',width=6.5,height=3)
 
 ##
-incomeDat <- probs$hincCat
-incomeDat <- as.data.frame(incomeDat)
-incomeDat$class <- c(paste('Class',1:6),'Overall')
-
-incomeDat <- gather(incomeDat, 'income','probability',-class)
-
-incomeDat$income <- factor(incomeDat$income,levels=unique(incomeDat$income))
-
-incomeDat$overall <- incomeDat$class=='Overall'
-
-ggplot(incomeDat,aes(income,probability,fill=overall))+geom_col(position='dodge')+facet_wrap(~class,nrow=1)+theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),legend.position='none',text=element_text(size=12),plot.margin = unit(c(1,1,2,1), "lines"))+xlab(NULL)+scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))+ggtitle('Income')
-
+plotGroup('hincCat')+scale_x_discrete(labels=colnames(probs$hincCat))+
+    ggtitle('Household Income Quartile')
 ggsave('income.png',width=6.5,height=3)
 
 
