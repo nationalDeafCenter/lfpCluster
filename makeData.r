@@ -5,7 +5,7 @@ library(readr) ## read in the csvs faster
 library(survey)
 library(dplyr)
 
-states <- read.csv('../data/acs5yr2016/states.csv')
+states <- read.csv('../generalCode/states.csv')
 
 pVars <- c('SERIALNO','DEAR','ST','AGEP','ADJINC','SCHL','ESR','WKW','WKHP','SCH','DDRS','DEYE','DOUT','DPHY','DRAT','DRATX','DREM','ENG','FER','MAR','INTP', 'OIP', 'PAP', 'PERNP', 'PINCP', 'RETP', 'SEMP', 'SSIP', 'SSP', 'WAGP','VPS','PAOC','SFR','RAC1P','HISP','RELP','MSP','WAOB','SCIENGRLP','CIT','SEX','PWGTP',paste0('pwgtp',1:80))
 
@@ -13,7 +13,7 @@ hVars <- c('SERIALNO','TYPE','LNGI','HUPAC','HUPAOC','HUPARC','FPARC','FES','HHT
 
 ## need: DEAR, attain, employment,PERNP, fulltime
 
-sdat <- read_csv('../acs2016/csv_pus/ss16pusa.csv')
+sdat <- read_csv('../../data/byYear/ss16pusa.csv')
 
 #sdat <- read_csv('../data/acs5yr2016/ss16pusa.csv')
 sdat <- sdat%>%filter(DEAR==1)

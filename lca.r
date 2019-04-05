@@ -6,7 +6,7 @@ library(dplyr)
 library(poLCA)
 
 load('clusteringData1yr.RData')
-
+## note: is.na(hincp) only true for group quarters
 sdat2 <- subset(sdat,agep<41 & agep>=25 & !is.na(hincp)& esr==6 )#& inSchool==0)
 
 sdat2 <- droplevels(sdat2)
@@ -127,6 +127,16 @@ itemNames <- c('Age','Income\nQuartile','Marital\nStatus','Immig.','Deafdisabled
 porig <- lca6$P
 lca6$P <- crossprod(lca6$posterior,sdat2$pwgtp/sum(sdat2$pwgtp))#/nrow(sdat2)
 
+prep <-
+    sapply(1:80,
+           function(x)
+               crossprod(sdat2[[paste0('pwgtp',x)]],lca6$posterior)/sum(sdat2[[paste0('pwgtp',x)]]))
+
+P.seOrig <- lca6$P.se
+
+lca6$P.se <- sqrt(apply(sweep(prep,1,lca6$P),1,function(x) mean(x^2)*4)+
+                      lca6$P.se^2)
+
 save(lca6,file='lca6.RData')
 
 lcadat$other <- ifelse(sdat2$otherDiss, 'Yes','No')
@@ -169,10 +179,14 @@ pdatFun <- function(varbs,se,vnames=NULL){
     pdat
 }
 
-pdatTot <- function(varbs,vnames=NULL,calc=NULL,catName){
+pdat1 <- function(varbs,vnames=NULL){
     probDat <- pdatFun(varbs,se=FALSE,vnames=vnames)
     seDat <- pdatFun(varbs,se=TRUE,vnames=vnames)
-    pdat <- merge(probDat,seDat)
+    merge(probDat,seDat)
+}
+
+pdatTot <- function(varbs,vnames=NULL,calc=NULL,catName){
+    pdat <- pdat1(varbs=varbs,vnames=vnames)
     pdat <- within(pdat,{
                          ebmin=rowMax(cbind(probability-2*se,0))
                          ebmax=rowMin(cbind(probability+2*se,1))
@@ -200,6 +214,8 @@ plotGroup <- function(varbs,vnames=NULL,calc=NULL,catName='n/a'){
 }
 
 
+
+
 ## disDat <- pdatTot(c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),catName='disability')
 
 ## edDat <- pdatTot(c('attain','inSchool'),catName='education')
@@ -222,9 +238,6 @@ plotGroup(varbs=c('other','selfCare','blind','indepLiving','ambulatory','cogniti
           calc='Deafdisabled',catName='Disabilities')
 
 ggsave('disability.png',width=6.5,height=3)
-
-
-
 
 ## plot demographics
 plotGroup(varbs=c('native','white','sex'),
@@ -258,6 +271,38 @@ plotGroup('hincCat')+scale_x_discrete(labels=colnames(probs$hincCat))+
 ggsave('income.png',width=6.5,height=3)
 
 
+
+## plot proportions
+propDat <- data.frame(Class=factor(1:6,levels=6:1),Proportion=lca6$P,SE=lca6$P.se)
+propDat$label_pos <- cumsum(propDat$Proportion)-propDat$Proportion/2
+ggplot(propDat,aes(1,Proportion,fill=Class,label=Class))+geom_col()+
+    scale_y_continuous(labels=scales::percent)+
+    theme(axis.title.y=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())+
+        geom_text(aes(1,label_pos))+coord_flip()+scale_fill_manual(values=subwayPalette,guide='none')+ylab(NULL)
+ggsave("ClusterProportions.png",width=3,height=1)
+
+printProb <- function(varbs,vnames=NULL){
+    ddd <- pdat1(varbs,vnames)
+    ests <- spread(subset(ddd,select=-se),var,probability)%>%column_to_rownames("class")
+    ses <- spread(subset(ddd,select=-probability),var,se)%>%column_to_rownames("class")
+    out <- matrix(nrow=nrow(ests),ncol=ncol(ests),dimnames=dimnames(ests))
+    for(i in 1:nrow(ests)) for(j in 1:ncol(ests)) out[i,j] <-
+        ifelse(all(ses[i,]==0)|all(ses[,j]==0),round(ests[i,j]*100,1),
+               paste0(round(ests[i,j]*100,1),' (',round(ses[i,j]*100,1),')'))
+    out
+}
+
+## probabilities in a spreadsheet
+openxlsx::write.xlsx(
+    list(clusterProportions=propDat[,-ncol(propDat)],
+         disability=printProb(c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),vnames=c(other='Deafdisabled',selfCare='Self Care',blind='Blind',indepLiving='Independent Living',ambulatory='Ambulatory',cognitive='Cognitive')),
+         demographics=printProb(c('native','white','sex'),c(native='Native Born',white='White',sex='Female')),
+         family=printProb(c('sex','married','hupac'),c('Female','Married','KidsAtHome')),
+         education=printProb(c('attain','inSchool')),
+         age=printProb('ageCat','age'),
+         HHincome=printProb('hincCat','')),
+    row.names=TRUE,
+    file='LCAprobabilities.xlsx')
 
 ## mean(rowMax(lca5$posterior)>0.8)
 ## lcasD <- lapply(1:10,function(k) poLCA(cbind(ageCat,hincCat,married,native,hupac,attain,white,sex)~1,nclass=k,nrep=20,na.rm=FALSE,verbose=FALSE,calc.se=FALSE,data=lcadat[!sdat2$otherDiss,]))
