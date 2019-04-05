@@ -1,0 +1,42 @@
+---
+title: cluster sample size
+format: "html_document"
+---
+
+```{r loadData}
+pload('clusteringData1yr.RData')
+
+```
+Excluded: non-deaf, institutionalized
+
+```{r initialSample}
+nrow(sdat) ## initial sample size
+table(sdat$dear) ## deaf people
+range(sdat$agep) ## age range
+sum(sdat$esr==6,na.rm=TRUE) ## NILF; na for age<16
+mean(sdat$esr==6,na.rm=TRUE) ## NILF; na for age<16
+```
+
+Now copying exclusion code from `lca.r`
+
+Age:
+```{r age}
+sdat <- subset(sdat,agep<41 & agep>=25)
+nrow(sdat)
+sum(sdat$esr==6)
+mean(sdat$esr==6)
+```
+
+Exclude income=NA (i.e. group quarters):
+```{r incomeNA}
+sdat <- subset(sdat,!is.na(hincp))
+nrow(sdat)
+sum(sdat$esr==6)
+mean(sdat$esr==6)
+```
+
+Only NILF
+```{r nilf}
+sdat <- subset(sdat,esr==6)
+nrow(sdat)
+```
