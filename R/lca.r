@@ -1,47 +1,55 @@
+library(tidyverse)
 library(grid)
 library(gridExtra)
-library(tidyr)
-library(ggplot2)
-library(dplyr)
 library(poLCA)
 
-load('clusteringData1yr.RData')
-## note: is.na(hincp) only true for group quarters
-sdat2 <- subset(sdat,agep<41 & agep>=25 & !is.na(hincp)& esr==6 )#& inSchool==0)
+select <- dplyr::select
 
-sdat2 <- droplevels(sdat2)
+loadData <- TRUE
+if(exists('sdat'))
+  if(nrow(sdat)==137934&ncol(sdat)==153) ### correct as of 4/17/2020 may need revision
+    loadData <- FALSE
 
-levels(sdat2$hupac) <- c('0-6','6-17','0-6','noKids')
-
-sdat2$native <- sdat2$citizenship=='native'
-
-sdat2$married <- sdat2$married=='married'
-
-sdat2$white <- sdat2$raceEth=='White'
-
-dis <- c('ddrs','deye','dout','dphy','drem')
-sdat2$ageCat <- cut(sdat2$agep,c(24,30,35,40),include.lowest=TRUE,labels=FALSE)
-
-sdat2$hincCat <- cut(sdat2$hincp,quantile(sdat2$hincp,na.rm=TRUE),include.lowest=TRUE,labels=FALSE)
-
-lcadat <- model.frame(~ ageCat + married + native + ddrs+deye+dout+dphy+drem+
-                          hupac + hincCat + attain + white+sex,data=sdat2)
-
-lcadat <- lcadat%>%rename(selfCare=ddrs,blind=deye,indepLiving=dout,ambulatory=dphy,cognitive=drem)
-
-
-for(i in 1:ncol(lcadat)){
-    if(is.factor(lcadat[[i]])) lcadat[[i]] <- as.numeric(lcadat[[i]])
-    if(is.logical(lcadat[[i]])) lcadat[[i]] <- 2-lcadat[[i]]
+if(loadData){
+  sdatFile <- 'data/clusteringData1yr2018.RData'
+  if(file.exists(sdatFile))  ## the prepared data is available
+    if(
+      file.info(sdatFile)$mtime>max(
+        file.info('R/makeData.r')$mtime,
+        file.info('R/readInData.r')$mtime,
+        file.info('R/manipulateData.r')$mtime
+      )
+    ){ ## and up to date
+      load(sdatFile)
+  } else source('R/makeData.r')
 }
 
-lcadat$inSchool <- 2-sdat2$inSchool
-
 lcas <- lapply(1:10,function(k) poLCA(cbind(ageCat,hincCat,married,native,selfCare,blind,indepLiving,ambulatory,cognitive,hupac,attain,white,sex,inSchool)~1,nclass=k,nrep=20,na.rm=FALSE,verbose=FALSE,calc.se=FALSE,data=lcadat))
-save(lcas,file='lcas.RData')
+save(lcas,file='artifacts/lcas.RData')
 
 
-ic <- sapply(lcas,function(x) c(aic=x$aic,bic=x$bic,Log.Lik=x$llik))
+ic <- sapply(lcas,function(x)
+    c(aic=x$aic,
+      caic=x$bic+x$npar,
+      bic=x$bic,
+      sabic=-2*x$llik+x$npar*log((x$N+2)/24),
+      Log.Lik=x$llik))
+
+
+ic%>%
+    rbind(`-2Log.Lik`=-2*ic['Log.Lik',])%>%
+    as.data.frame()%>%
+        `names<-`(1:10)%>%
+            rownames_to_column("index")%>%
+                filter(index!='Log.Lik')%>%
+                    pivot_longer(-index,"nclass")%>%
+                        mutate(nclass=as.numeric(nclass))%>%
+                            ggplot(aes(nclass,value,color=index,group=index))+geom_line()+
+                                geom_point(data=data.frame(x=apply(ic[1:4,],1,which.min),
+                                               y=apply(ic[1:4,],1,min)),
+                                           mapping=aes(x,y),size=2,inherit.aes=FALSE)+
+                                    scale_x_continuous("# Classes",1:10,labels=1:10)
+
 
 ## plot ICs
 icPlot <- data.frame(nclass=rep(1:10,3),IC=c(ic[1,],ic[2,],-2*ic[3,]),what=rep(c('AIC','BIC','-2Log.Lik'),each=10))
@@ -55,33 +63,33 @@ plot(ic[1,],ylim=range(ic[-3,]),type='b')
 lines(ic[2,],type='b')
 for(i in 1:length(lcas)) lcas[[i]]$call$nclass <- i
 
-lca5 <- poLCA(cbind(ageCat,hincCat,married,native,selfCare,blind,indepLiving,ambulatory,cognitive,hupac,attain,white,sex)~1,nclass=5,nrep=100,na.rm=FALSE,verbose=FALSE,calc.se=TRUE,data=lcadat)
+#lca5 <- poLCA(cbind(ageCat,hincCat,married,native,selfCare,blind,indepLiving,ambulatory,cognitive,hupac,attain,white,sex)~1,nclass=5,nrep=100,na.rm=FALSE,verbose=FALSE,calc.se=TRUE,data=lcadat)
 
 lca6 <- poLCA(cbind(ageCat,hincCat,married,native,selfCare,blind,indepLiving,ambulatory,cognitive,hupac,attain,white,sex,inSchool)~1,nclass=6,nrep=100,na.rm=FALSE,verbose=FALSE,calc.se=TRUE,data=lcadat)
 
-###  put them in the order I originally sent to Carrie Lou:
-adjp <- as.vector(crossprod(lca6$posterior,sdat2$pwgtp/sum(sdat2$pwgtp)))
-intendedP <- c(0.2346, 0.1177, 0.0773,0.3439, 0.1146, 0.1120)
-neword <- sapply(intendedP,function(p) which.min(abs(round(adjp,4)-p)))
+lca6 <- update(lca6,probs.start=poLCA.reorder(lca6$probs.start,order(lca6$P,decreasing=TRUE)),nrep=1)
 
-attempts <- lca6$attempts
-pstart <- lca6$probs.start
-pstart <- poLCA.reorder(pstart,neword)
-lca6 <- poLCA(#formula(lca6)
-    cbind(ageCat,hincCat,married,native,selfCare,blind,indepLiving,ambulatory,cognitive,hupac,attain,white,sex,inSchool)~1
-   ,lcadat, nclass=6,na.rm=FALSE,probs.start=pstart,verbose=FALSE,calc.se=TRUE)
-lca6$attempts <- attempts
+save(lca6,file='artifacts/lca6raw.RData')
+
+lca7 <- poLCA(cbind(ageCat,hincCat,married,native,selfCare,blind,indepLiving,ambulatory,cognitive,hupac,attain,white,sex,inSchool)~1,nclass=7,nrep=100,na.rm=FALSE,verbose=FALSE,calc.se=TRUE,data=lcadat)
+
+lca7 <- update(lca7,probs.start=poLCA.reorder(lca7$probs.start,order(lca7$P,decreasing=TRUE)),nrep=1)
+
+save(lca7,file='artifacts/lca7raw.RData')
 
 
-probsBig <- lca6$probs
-ad <- NULL
-oth <- sdat2[,'otherDiss']
-for(cc in 1:6){
-    post <- lca6$posterior[,cc]
-    p <- sum(oth*post)/sum(post)
-    ad <- rbind(ad,c(p,1-p))
-}
-probsBig$other <- ad
+## ###  put them in the order I originally sent to Carrie Lou:
+## adjp <- as.vector(crossprod(lca6$posterior,sdat$pwgtp/sum(sdat$pwgtp)))
+## intendedP <- c(0.2346, 0.1177, 0.0773,0.3439, 0.1146, 0.1120)
+## neword <- sapply(intendedP,function(p) which.min(abs(round(adjp,4)-p)))
+
+## attempts <- lca6$attempts
+## pstart <- lca6$probs.start
+## pstart <- poLCA.reorder(pstart,neword)
+## lca6 <- poLCA(#formula(lca6)
+##     cbind(ageCat,hincCat,married,native,selfCare,blind,indepLiving,ambulatory,cognitive,hupac,attain,white,sex,inSchool)~1
+##    ,lcadat, nclass=6,na.rm=FALSE,probs.start=pstart,verbose=FALSE,calc.se=TRUE)
+## lca6$attempts <- attempts
 
 
 
@@ -113,47 +121,6 @@ nameCat <- function(probs){
     probs
 }
 
-
-lca6$probs$other <- ad
-lca6$probs <- lca6$probs[c(1:4,15,5:14)]
-lca6$probs <- nameCat(lca6$probs) #probsAll <- nameCat(probsAll)
-
-lca6$probs.se$other <- matrix(0,nrow(ad),ncol(ad))
-lca6$probs.se <- lca6$probs.se[c(1:4,15,5:14)]
-
-
-itemNames <- c('Age','Income\nQuartile','Marital\nStatus','Immig.','Deafdisabled','Self\n-Care','Vision','Indep.\nLiving','Amb.','Cog','Kids at\nHome','Ed.\nAttain.','Race','Sex','In\nSchool')
-
-porig <- lca6$P
-lca6$P <- crossprod(lca6$posterior,sdat2$pwgtp/sum(sdat2$pwgtp))#/nrow(sdat2)
-
-prep <-
-    sapply(1:80,
-           function(x)
-               crossprod(sdat2[[paste0('pwgtp',x)]],lca6$posterior)/sum(sdat2[[paste0('pwgtp',x)]]))
-
-P.seOrig <- lca6$P.se
-
-lca6$P.se <- sqrt(apply(sweep(prep,1,lca6$P),1,function(x) mean(x^2)*4)+
-                      lca6$P.se^2)
-
-save(lca6,file='lca6.RData')
-
-lcadat$other <- ifelse(sdat2$otherDiss, 'Yes','No')
-makeplot2(lca6,NULL,itemNames, calc='other', include.margin=TRUE,data=lcadat)
-ggsave('pooledCluster6.png',height=6.5,width=9,units='in')
-
-#### plot groups of variables
-probs <- lca6$probs
-for(nn in names(probs)) probs[[nn]] <- rbind(probs[[nn]],Overall=margProb(lcadat[[nn]]))
-
-probs.se <- lca6$probs.se
-for(nn in names(probs.se)){
-    probs.se[[nn]] <- rbind(probs.se[[nn]],Overall=0)
-    dimnames(probs.se[[nn]]) <- dimnames(probs[[nn]])
-}
-
-
 keepColName <- function(x,cc=1){
     cnames <- colnames(x)
     out <- x[,cc]
@@ -161,7 +128,18 @@ keepColName <- function(x,cc=1){
     out
 }
 
-pdatFun <- function(varbs,se,vnames=NULL){
+pdatFun <- function(fit,varbs,se,vnames=NULL){
+
+  probs <- fit$probs
+  for(nn in names(probs)) probs[[nn]] <- rbind(probs[[nn]],Overall=margProb(lcadat[[nn]]))
+
+  probs.se <- fit$probs.se
+  for(nn in names(probs.se)){
+    probs.se[[nn]] <- rbind(probs.se[[nn]],Overall=0)
+    dimnames(probs.se[[nn]]) <- dimnames(probs[[nn]])
+  }
+
+
     ppp <- if(se) probs.se else probs
     pdat <- ppp[varbs]
     for(i in 1:length(pdat))
@@ -179,14 +157,14 @@ pdatFun <- function(varbs,se,vnames=NULL){
     pdat
 }
 
-pdat1 <- function(varbs,vnames=NULL){
-    probDat <- pdatFun(varbs,se=FALSE,vnames=vnames)
-    seDat <- pdatFun(varbs,se=TRUE,vnames=vnames)
+pdat1 <- function(fit,varbs,vnames=NULL){
+    probDat <- pdatFun(fit,varbs,se=FALSE,vnames=vnames)
+    seDat <- pdatFun(fit,varbs,se=TRUE,vnames=vnames)
     merge(probDat,seDat)
 }
 
-pdatTot <- function(varbs,vnames=NULL,calc=NULL,catName){
-    pdat <- pdat1(varbs=varbs,vnames=vnames)
+pdatTot <- function(fit,varbs,vnames=NULL,calc=NULL,catName){
+    pdat <- pdat1(fit,varbs=varbs,vnames=vnames)
     pdat <- within(pdat,{
                          ebmin=rowMax(cbind(probability-2*se,0))
                          ebmax=rowMin(cbind(probability+2*se,1))
@@ -199,9 +177,9 @@ pdatTot <- function(varbs,vnames=NULL,calc=NULL,catName){
     pdat
 }
 
-plotGroup <- function(varbs,vnames=NULL,calc=NULL,catName='n/a'){
+plotGroup <- function(fit, varbs,vnames=NULL,calc=NULL,catName='n/a'){
 
-    pdat <- pdatTot(varbs,vnames=vnames,calc=calc,catName=catName)
+    pdat <- pdatTot(fit,varbs,vnames=vnames,calc=calc,catName=catName)
 
     ggplot(pdat,aes(var,probability,fill=overall))+geom_col(position='dodge')+
         geom_errorbar(aes(ymin=ebmin,ymax=ebmax),width=0)+
@@ -214,75 +192,120 @@ plotGroup <- function(varbs,vnames=NULL,calc=NULL,catName='n/a'){
 }
 
 
+figures <- function(fit){
+
+    nclass <- length(fit$P)
+    if(!is.element(paste0('figures/model',nclass,'class'),list.dirs('figures')))
+        dir.create(paste0('figures/model',nclass,'class'))
+
+    probsBig <- fit$probs
+    oth <- sdat[,'otherDiss']
+    nd <- NULL
+    numDiss <- rowSums(lcadat[,c('selfCare','blind','indepLiving','ambulatory','cognitive')]==1)
+
+    for(cc in 1:nclass){
+        post <- fit$posterior[,cc]
+        n <- sum(numDiss*post)/sum(post)
+        nd <- c(nd,n)
+    }
+    fit <- update(fit,probs.start=poLCA.reorder(fit$probs.start,order(nd,decreasing=TRUE)),nrep=1)
+
+    ad <- NULL
+    for(cc in 1:nclass){
+        post <- fit$posterior[,cc]
+        p <- sum(oth*post)/sum(post)
+        ad <- rbind(ad,c(p,1-p))
+    }
+
+    probsBig$other <- ad
+    fit$probs$other <- ad
 
 
-## disDat <- pdatTot(c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),catName='disability')
 
-## edDat <- pdatTot(c('attain','inSchool'),catName='education')
-## ageDat <- pdatTot('ageCat',catName='age')
+  fit$probs <- fit$probs[c(1:4,15,5:14)]
+  fit$probs <- nameCat(fit$probs) #probsAll <- nameCat(probsAll)
 
-## pdat <- rbind(disDat,edDat,ageDat)
+  fit$probs.se$other <- matrix(0,nrow(ad),ncol(ad))
+  fit$probs.se <- fit$probs.se[c(1:4,15,5:14)]
 
-## ggplot(pdat,aes(var,probability,fill=overall))+geom_col(position='dodge')+
-##         geom_errorbar(aes(ymin=ebmin,ymax=ebmax),width=0)+
-##         facet_grid(category~class,scales="free")+
-##         theme(axis.text.x = element_text(angle = -90, hjust = 0,vjust=.5),
-##                   legend.position='none',text=element_text(size=12))+
-##         xlab(NULL)+
-##         scale_y_continuous(name=NULL,labels=scales::percent,limits=c(0,1))
+
+  itemNames <- c('Age','Income\nQuartile','Marital\nStatus','Immig.','Deafdisabled','Self\n-Care','Vision','Indep.\nLiving','Amb.','Cog','Kids at\nHome','Ed.\nAttain.','Race','Sex','In\nSchool')
+
+  porig <- fit$P
+  fit$P <- crossprod(fit$posterior,sdat$pwgtp/sum(sdat$pwgtp))#/nrow(sdat)
+
+  prep <-
+    sapply(1:80,
+      function(x)
+        crossprod(sdat[[paste0('pwgtp',x)]],fit$posterior)/sum(sdat[[paste0('pwgtp',x)]]))
+
+  P.seOrig <- fit$P.se
+
+  fit$P.se <- sqrt(apply(sweep(prep,1,fit$P),1,function(x) mean(x^2)*4)+
+                     fit$P.se^2)
+
+  save(fit,file=paste0('artifacts/lca',nclass,'.RData'))
+
+  lcadat$other <- ifelse(sdat$otherDiss, 'Yes','No')
+  makeplot2(fit,NULL,itemNames, calc='other', include.margin=TRUE,data=lcadat)
+  ggsave(paste0('figures/model',nclass,'class/pooledCluster.png'),height=6.5,width=9,units='in')
+
 
 
 ## plot disabilities
-plotGroup(varbs=c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),
-          vnames=c(other='Deafdisabled',selfCare='Self Care',blind='Blind',indepLiving='Independent Living',ambulatory='Ambulatory',cognitive='Cognitive'),
-          calc='Deafdisabled',catName='Disabilities')
+      plotGroup(fit,varbs=c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),
+                vnames=c(other='Deafdisabled',selfCare='Self Care',blind='Blind',indepLiving='Independent Living',ambulatory='Ambulatory',cognitive='Cognitive'),
+                calc='Deafdisabled',catName='Disabilities')
+      ggsave(paste0('figures/model',nclass,'class/disability.png'),width=6.5,height=3)
 
-ggsave('disability.png',width=6.5,height=3)
+      ggplot(mapping=aes(x=1:7,y=sort(nd,decreasing=TRUE)))+geom_col()+labs(title='Avg. #\nDisabilities',x='Class',y=NULL)+scale_x_continuous(breaks=1:nclass,minor_breaks=NULL)
+      ggsave(paste0('figures/model',nclass,'class/numdisability.png'),width=1.5,height=3)
 
-## plot demographics
-plotGroup(varbs=c('native','white','sex'),
-          vnames=c(native='Native Born',white='White',sex='Female'),catName='Demographics')
+  ## plot demographics
+  plotGroup(fit,varbs=c('native','white','sex'),
+    vnames=c(native='Native Born',white='White',sex='Female'),catName='Demographics')
 
-ggsave('demographic.png',width=6.5,height=3)
+  ggsave(paste0('figures/model',nclass,'class/demographic.png'),width=6.5,height=3)
 
-### plot family
-plotGroup(varbs=c('sex','married','hupac'))+
+  ### plot family
+  plotGroup(fit,varbs=c('sex','married','hupac'),catName='Family')+
     scale_x_discrete(labels=c('Female','Married','Kids at Home (<6yo)','Kids at Home (all >5yo)',
-                         'No Kids at Home'),catName='Family')
-ggsave('family.png',width=6.5,height=3)
+      'No Kids at Home'))
+  ggsave(paste0('figures/model',nclass,'class/family.png'),width=6.5,height=3)
 
 
-#### education
-plotGroup(varbs=c('attain','inSchool'),catName='Education')+
+  #### education
+  plotGroup(fit,varbs=c('attain','inSchool'),catName='Education')+
     scale_x_discrete(labels=c('<HS','HS','Some College','BA+','Enrolled'))
 
-ggsave('education.png',width=6.5,height=3)
+  ggsave(paste0('figures/model',nclass,'class/education.png'),width=6.5,height=3)
 
-### age
-plotGroup('ageCat')+
+  ### age
+  plotGroup(fit,'ageCat')+
     scale_x_discrete(labels=c('25-30','31-35','36-40'))+
     ggtitle('Age')
 
-ggsave('age.png',width=6.5,height=3)
+  ggsave(paste0('figures/model',nclass,'class/age.png'),width=6.5,height=3)
 
-##
-plotGroup('hincCat')+scale_x_discrete(labels=colnames(probs$hincCat))+
+  ##
+  plotGroup(fit,'hincCat')+scale_x_discrete(labels=colnames(probs$hincCat))+
     ggtitle('Household Income Quartile')
-ggsave('income.png',width=6.5,height=3)
+  ggsave(paste0('figures/model',nclass,'class/income.png'),width=6.5,height=3)
 
 
 
-## plot proportions
-propDat <- data.frame(Class=factor(1:6,levels=6:1),Proportion=lca6$P,SE=lca6$P.se)
-propDat$label_pos <- cumsum(propDat$Proportion)-propDat$Proportion/2
-ggplot(propDat,aes(1,Proportion,fill=Class,label=Class))+geom_col()+
+  ## plot proportions
+  propDat <- data.frame(Class=factor(1:nclass,levels=nclass:1),Proportion=fit$P,SE=fit$P.se)
+  propDat$label_pos <- cumsum(propDat$Proportion)-propDat$Proportion/2
+  ggplot(propDat,aes(1,Proportion,fill=Class,label=Class))+geom_col()+
     scale_y_continuous(labels=scales::percent)+
     theme(axis.title.y=element_blank(),axis.text.y=element_blank(),axis.ticks.y=element_blank())+
-        geom_text(aes(1,label_pos))+coord_flip()+scale_fill_manual(values=subwayPalette,guide='none')+ylab(NULL)
-ggsave("ClusterProportions.png",width=3,height=1)
+    geom_text(aes(1,label_pos))+coord_flip()+scale_fill_manual(values=subwayPalette,guide='none')+ylab(NULL)
+  ggsave(paste0("figures/model",nclass,'class/ClusterProportions.png'),width=3,height=1)
+}
 
-printProb <- function(varbs,vnames=NULL){
-    ddd <- pdat1(varbs,vnames)
+printProb <- function(fit,varbs,vnames=NULL){
+    ddd <- pdat1(fit,varbs,vnames)
     ests <- spread(subset(ddd,select=-se),var,probability)%>%column_to_rownames("class")
     ses <- spread(subset(ddd,select=-probability),var,se)%>%column_to_rownames("class")
     out <- matrix(nrow=nrow(ests),ncol=ncol(ests),dimnames=dimnames(ests))
@@ -295,20 +318,20 @@ printProb <- function(varbs,vnames=NULL){
 ## probabilities in a spreadsheet
 openxlsx::write.xlsx(
     list(clusterProportions=propDat[,-ncol(propDat)],
-         disability=printProb(c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),vnames=c(other='Deafdisabled',selfCare='Self Care',blind='Blind',indepLiving='Independent Living',ambulatory='Ambulatory',cognitive='Cognitive')),
-         demographics=printProb(c('native','white','sex'),c(native='Native Born',white='White',sex='Female')),
-         family=printProb(c('sex','married','hupac'),c('Female','Married','KidsAtHome')),
-         education=printProb(c('attain','inSchool')),
-         age=printProb('ageCat','age'),
-         HHincome=printProb('hincCat','')),
+         disability=printProb(fit,c('other','selfCare','blind','indepLiving','ambulatory','cognitive'),vnames=c(other='Deafdisabled',selfCare='Self Care',blind='Blind',indepLiving='Independent Living',ambulatory='Ambulatory',cognitive='Cognitive')),
+         demographics=printProb(fit,c('native','white','sex'),c(native='Native Born',white='White',sex='Female')),
+         family=printProb(fit,c('sex','married','hupac'),c('Female','Married','KidsAtHome')),
+         education=printProb(fit,c('attain','inSchool')),
+         age=printProb(fit,'ageCat','age'),
+         HHincome=printProb(fit,'hincCat','')),
     row.names=TRUE,
     file='LCAprobabilities.xlsx')
 
 ## mean(rowMax(lca5$posterior)>0.8)
-## lcasD <- lapply(1:10,function(k) poLCA(cbind(ageCat,hincCat,married,native,hupac,attain,white,sex)~1,nclass=k,nrep=20,na.rm=FALSE,verbose=FALSE,calc.se=FALSE,data=lcadat[!sdat2$otherDiss,]))
+## lcasD <- lapply(1:10,function(k) poLCA(cbind(ageCat,hincCat,married,native,hupac,attain,white,sex)~1,nclass=k,nrep=20,na.rm=FALSE,verbose=FALSE,calc.se=FALSE,data=lcadat[!sdat$otherDiss,]))
 ## sapply(lcasD,function(x) c(aic=x$aic,bic=x$bic))
 
-## odDat <- lcadat[sdat2$otherDiss,]
+## odDat <- lcadat[sdat$otherDiss,]
 ## odDat$cognitive[odDat$selfCare==2 & odDat$blind==2 & odDat$indepLiving==2 & odDat$ambulatory==2] <- NA
 ## lcasOD <- lapply(1:10,function(k) poLCA(cbind(ageCat,hincCat,married,native,selfCare,blind,indepLiving,ambulatory,cognitive,hupac,attain,white,sex)~1,nclass=k,nrep=20,na.rm=FALSE,verbose=FALSE,calc.se=FALSE,data=odDat))
 ## sapply(lcasOD,function(x) c(aic=x$aic,bic=x$bic))
@@ -321,9 +344,9 @@ openxlsx::write.xlsx(
 
 ## probsOD <- lcasOD[[4]]$probs
 ## cog <- NULL
-## cogDiff <- 2-lcadat[sdat2$otherDiss,'cognitive']
+## cogDiff <- 2-lcadat[sdat$otherDiss,'cognitive']
 ## numDis <- NULL
-## nd <- with(lcadat[sdat2$otherDiss,], (selfCare==1) + (blind==1) +(indepLiving==1) +(ambulatory==1) +(cognitive==1))
+## nd <- with(lcadat[sdat$otherDiss,], (selfCare==1) + (blind==1) +(indepLiving==1) +(ambulatory==1) +(cognitive==1))
 ## for(cc in 1:4){
 ##     post <- lcasOD[[4]]$posterior[,cc]
 ##     p <- sum(cogDiff*post)/sum(post)
@@ -340,7 +363,7 @@ openxlsx::write.xlsx(
 ## probsOD$other <- numDis
 ## probsOD <- probsOD[names(probsAll)]
 
-## probsOD <- lapply(names(probsOD),function(x) rbind(probsOD[[x]],margProb(lcadat[sdat2$otherDiss,x])))
+## probsOD <- lapply(names(probsOD),function(x) rbind(probsOD[[x]],margProb(lcadat[sdat$otherDiss,x])))
 
 ## itemNames2 <- itemNames
 ## itemNames2[5] <- '# of\nDisabilities'
