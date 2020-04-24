@@ -9,6 +9,6 @@ source('R/readInData.r')
 
 source('R/manipulateData.r')
 
-save(sdat,lcadat,file='data/clusteringData1yr2018.RData')
+save(sdat,lcadat,file='data/clusteringData1yr2018combined.RData')
 
 
